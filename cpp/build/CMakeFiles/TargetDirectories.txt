@@ -1,0 +1,3 @@
+/home/david/data/spin_images/cpp/build/CMakeFiles/rebuild_cache.dir
+/home/david/data/spin_images/cpp/build/CMakeFiles/edit_cache.dir
+/home/david/data/spin_images/cpp/build/CMakeFiles/generate_images.dir
