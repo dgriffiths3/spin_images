@@ -1,7 +1,9 @@
 import math, json, os, sys
+import tensorflow as tf
 import argparse
 import keras
-from keras.callbacks import EarlyStopping, ModelCheckpoint
+from keras.callbacks import ModelCheckpoint, TensorBoard
+from keras.utils import multi_gpu_model
 from keras.layers import Dense
 from keras.models import Model
 from keras.optimizers import Adam
@@ -18,9 +20,11 @@ def parse_args():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--data_dir", help="Path to test data directory", required=True)
-    parser.add_argument("-i", "--image_size", help="Size of one image side", type=int, required=True)
+    parser.add_argument("-i", "--image_size", help="Size of one image side", type=int, default=224)
     parser.add_argument("-e", "--epochs", help="Number of training epochs", type=int, required=True)
     parser.add_argument("-b", "--batch_size", help="Batch size", type=int, default=1)
+    parser.add_argument("-g", "--num_gpu", help="Number of GPUs to use. Note: Batch size must be divisable by GPUs", default=1)
+    parser.add_argument("-l", "--log_dir", help="Directory to save tensorboard logs", default='./logs')
     parser.add_argument("-o", "--output_model", help="Name of output model (.h5)", required=True)
     args = parser.parse_args()
 
@@ -29,7 +33,7 @@ def parse_args():
 
     return args
 
-def train_resnet(data_dir, image_size, epochs, batch_size, output_model):
+def train_resnet(data_dir, image_size, epochs, batch_size, log_dir, output_model):
 
     '''
     Train a ResNet50 model and save the .h5 output to output_model
@@ -46,9 +50,11 @@ def train_resnet(data_dir, image_size, epochs, batch_size, output_model):
     - data_dir
         |_ train
             |_ class
+                : :
             |_ class_n
         |_ val
             |_ class
+                : :
             |_ class_n
     '''
 
@@ -71,7 +77,16 @@ def train_resnet(data_dir, image_size, epochs, batch_size, output_model):
 
     classes = list(iter(batches.class_indices))
 
-    model = keras.applications.resnet50.ResNet50(weights=None)
+    with tf.device('/cpu:0'):
+
+        model = keras.applications.resnet50.ResNet50(weights=None)
+
+    if num_gpu >= 2:
+        try:
+            model = multi_gpu_model(model, gpus=num_gpu)
+            print '[INFO] Multi-GPU enabled, training on %s GPUs' %num_gpu
+        except:
+            print '[INFO] Multi-GPU failed, training on single CPU/GPU'
 
     last = model.layers[-1].output
     x = Dense(len(classes), activation="softmax")(last)
@@ -81,10 +96,15 @@ def train_resnet(data_dir, image_size, epochs, batch_size, output_model):
         classes[batches.class_indices[c]] = c
     resnet_model.classes = classes
 
-    early_stopping = EarlyStopping(patience=10)
     checkpointer = ModelCheckpoint('resnet50_best.h5', verbose=1, save_best_only=True)
+    tbCallBack = TensorBoard(log_dir=log_dir, histogram_freq=0, write_graph=True, write_images=True)
 
-    resnet_model.fit_generator(batches, steps_per_epoch=len_train_images, epochs=epochs, callbacks=[early_stopping, checkpointer], validation_data=val_batches, validation_steps=num_val_steps)
+    resnet_model.fit_generator(batches,
+                               steps_per_epoch=len_train_images/batch_size,     \
+                               epochs=epochs,                        \
+                               callbacks=[checkpointer, tbCallBack], \
+                               validation_data=val_batches,          \
+                               validation_steps=num_val_steps)
     resnet_model.save(output_model)
 
 if __name__ == '__main__':
@@ -95,6 +115,8 @@ if __name__ == '__main__':
     image_size = args.image_size
     epochs = args.epochs
     batch_size = args.batch_size
+    num_gpu = args.num_gpu
+    log_dir = args.log_dir
     output_model = args.output_model
 
-    train_resnet(data_dir, image_size, epochs, batch_size, output_model)
+    train_resnet(data_dir, image_size, epochs, batch_size, log_dir, output_model)
